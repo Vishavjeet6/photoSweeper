@@ -15,7 +15,7 @@ import SimilarPhotosList from '../components/SimilarPhotosList';
 
 export default function ResultsScreen({ route, navigation }) {
   // Ensure we have valid arrays even if route.params is missing properties
-  const { lowQualityPhotos = [], duplicatePhotos = [], totalScanned = 0 } = route.params || {};
+  const { lowQualityPhotos = [], duplicatePhotos = [], similarPhotos = [], totalScanned = 0 } = route.params || {};
   const [selectedPhotos, setSelectedPhotos] = useState(new Set());
   const [activeTab, setActiveTab] = useState('lowQuality');
 
@@ -39,13 +39,21 @@ export default function ResultsScreen({ route, navigation }) {
               ),
               lowQualityCount: scan.lowQualityCount - deletedPhotoIds.size,
             };
-          } else {
+          } else if (activeTab === 'duplicate') {
             return {
               ...scan,
               duplicatePhotos: scan.duplicatePhotos.filter(
                 photo => !deletedPhotoIds.has(photo.id)
               ),
               duplicateCount: scan.duplicateCount - deletedPhotoIds.size,
+            };
+          } else if (activeTab === 'similar') {
+            return {
+              ...scan,
+              similarPhotos: scan.similarPhotos.filter(
+                photo => !deletedPhotoIds.has(photo.id)
+              ),
+              similarCount: scan.similarCount - deletedPhotoIds.size,
             };
           }
         }
@@ -54,7 +62,7 @@ export default function ResultsScreen({ route, navigation }) {
 
       await AsyncStorage.setItem('scanHistory', JSON.stringify(updatedHistory));
     } catch (error) {
-      console.error('Error updating scan history:', error);
+      // Error handling without console log
     }
   };
 
@@ -96,7 +104,7 @@ export default function ResultsScreen({ route, navigation }) {
               setSelectedPhotos(new Set());
               Alert.alert('Success', 'Selected photos have been deleted.');
             } catch (error) {
-              console.error('Error deleting photos:', error);
+              // Error handling without console log
               Alert.alert('Error', 'Failed to delete selected photos.');
             }
           },
@@ -124,7 +132,7 @@ export default function ResultsScreen({ route, navigation }) {
       case 'similar':
         return (
           <SimilarPhotosList
-            photos={lowQualityPhotos}
+            photos={similarPhotos}
             selectedPhotos={selectedPhotos}
             onPhotoSelect={togglePhotoSelection}
             onDeleteSelected={deleteSelectedPhotos}
@@ -149,7 +157,7 @@ export default function ResultsScreen({ route, navigation }) {
       <View style={styles.header}>
         <Text style={styles.title}>Scan Results</Text>
         <Text style={styles.subtitle}>
-          Found {lowQualityPhotos.length} low quality photos and {duplicatePhotos.length} duplicate photos out of {totalScanned} total
+          Found {lowQualityPhotos.length} low quality photos, {similarPhotos.length} similar photos, and {duplicatePhotos.length} duplicate photos out of {totalScanned} total
         </Text>
       </View>
 
@@ -167,7 +175,7 @@ export default function ResultsScreen({ route, navigation }) {
           onPress={() => switchTab('similar')}
         >
           <Text style={[styles.tabText, activeTab === 'similar' && styles.activeTabText]}>
-            Similar Photos
+            Similar Photos ({similarPhotos.length})
           </Text>
         </TouchableOpacity>
         <TouchableOpacity

@@ -1,95 +1,154 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  Image,
   StyleSheet,
+  Image,
   TouchableOpacity,
-  FlatList,
-  Dimensions,
+  ScrollView,
+  ActivityIndicator,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system';
+import * as ImageManipulator from 'expo-image-manipulator';
+import { manipulateAsync } from 'expo-image-manipulator';
 
-const { width } = Dimensions.get('window');
-const PHOTO_SIZE = width / 2 - 24;
+export default function SimilarPhotosList({ photos, selectedPhotos, onPhotoSelect, onDeleteSelected }) {
+  const [similarGroups, setSimilarGroups] = useState([]);
+  const [isAnalyzing, setIsAnalyzing] = useState(true);
+  const [progress, setProgress] = useState(0);
 
-export default function SimilarPhotosList({ photos = [], selectedPhotos = [], onPhotoSelect }) {
-  const [expandedGroups, setExpandedGroups] = useState(new Set());
+  useEffect(() => {
+    analyzeSimilarPhotos();
+  }, [photos]);
 
-  const toggleGroup = (groupId) => {
-    const newExpanded = new Set(expandedGroups);
-    if (newExpanded.has(groupId)) {
-      newExpanded.delete(groupId);
-    } else {
-      newExpanded.add(groupId);
+  const analyzeSimilarPhotos = async () => {
+    setIsAnalyzing(true);
+    setProgress(0);
+
+    try {
+      // Group photos by time (within 1 minute)
+      const timeGroups = groupPhotosByTime(photos);
+      
+      // Analyze visual similarity within each time group
+      const groups = [];
+      let processedCount = 0;
+      const totalPhotos = photos.length;
+
+      for (const group of timeGroups) {
+        if (group.length > 1) {
+          const similarPhotos = await analyzeVisualSimilarity(group);
+          if (similarPhotos.length > 0) {
+            groups.push(similarPhotos);
+          }
+        }
+        processedCount += group.length;
+        setProgress(processedCount / totalPhotos);
+      }
+
+      setSimilarGroups(groups);
+    } catch (error) {
+      console.error('Error analyzing similar photos:', error);
+    } finally {
+      setIsAnalyzing(false);
     }
-    setExpandedGroups(newExpanded);
   };
 
-  const renderPhotoItem = ({ item: photo }) => {
-    const isSelected = selectedPhotos.includes(photo.uri);
-    return (
-      <TouchableOpacity
-        style={styles.photoItem}
-        onPress={() => onPhotoSelect(photo)}
-      >
-        <Image source={{ uri: photo.uri }} style={styles.photoImage} />
-        <View style={styles.photoInfo}>
-          <Text style={styles.photoName}>{photo.filename}</Text>
-          <Text style={styles.similarityText}>
-            {Math.round((photo.similarity || 0) * 100)}% similar
-          </Text>
-        </View>
-        <View style={styles.checkbox}>
-          <Ionicons
-            name={isSelected ? 'checkbox' : 'square-outline'}
-            size={24}
-            color={isSelected ? '#2196F3' : '#999'}
-          />
-        </View>
-      </TouchableOpacity>
-    );
+  const groupPhotosByTime = (photos) => {
+    const groups = [];
+    const sortedPhotos = [...photos].sort((a, b) => a.creationTime - b.creationTime);
+
+    let currentGroup = [];
+    let lastTime = null;
+
+    for (const photo of sortedPhotos) {
+      if (lastTime === null || photo.creationTime - lastTime <= 60000) { // 1 minute
+        currentGroup.push(photo);
+      } else {
+        if (currentGroup.length > 0) {
+          groups.push(currentGroup);
+        }
+        currentGroup = [photo];
+      }
+      lastTime = photo.creationTime;
+    }
+
+    if (currentGroup.length > 0) {
+      groups.push(currentGroup);
+    }
+
+    return groups;
   };
 
-  const renderGroup = ({ item: group }) => {
-    if (!group || !group.duplicates) return null;
-    
-    const isExpanded = expandedGroups.has(group.id);
+  const analyzeVisualSimilarity = async (photos) => {
+    const similarPhotos = [];
+    const processedPhotos = new Set();
+
+    for (let i = 0; i < photos.length; i++) {
+      if (processedPhotos.has(photos[i].id)) continue;
+
+      const currentGroup = [photos[i]];
+      processedPhotos.add(photos[i].id);
+
+      for (let j = i + 1; j < photos.length; j++) {
+        if (processedPhotos.has(photos[j].id)) continue;
+
+        const similarity = await comparePhotos(photos[i], photos[j]);
+        if (similarity > 0.85) { // 85% similarity threshold
+          currentGroup.push(photos[j]);
+          processedPhotos.add(photos[j].id);
+        }
+      }
+
+      if (currentGroup.length > 1) {
+        similarPhotos.push(currentGroup);
+      }
+    }
+
+    return similarPhotos;
+  };
+
+  const comparePhotos = async (photo1, photo2) => {
+    try {
+      // Compare basic properties
+      const sizeSimilarity = Math.min(photo1.fileSize, photo2.fileSize) / Math.max(photo1.fileSize, photo2.fileSize);
+      const dimensionSimilarity = Math.min(photo1.width * photo1.height, photo2.width * photo2.height) /
+                                Math.max(photo1.width * photo1.height, photo2.width * photo2.height);
+
+      // If basic properties are very different, photos are likely not similar
+      if (sizeSimilarity < 0.7 || dimensionSimilarity < 0.7) {
+        return 0;
+      }
+
+      // For more accurate comparison, we would use TensorFlow.js here
+      // But for now, we'll use a combination of basic properties
+      return (sizeSimilarity + dimensionSimilarity) / 2;
+    } catch (error) {
+      console.error('Error comparing photos:', error);
+      return 0;
+    }
+  };
+
+  const getRecommendedPhoto = (group) => {
+    // Recommend the photo with the highest resolution
+    return group.reduce((best, current) => {
+      const bestPixels = best.width * best.height;
+      const currentPixels = current.width * current.height;
+      return currentPixels > bestPixels ? current : best;
+    });
+  };
+
+  if (isAnalyzing) {
     return (
-      <View style={styles.groupContainer}>
-        <TouchableOpacity
-          style={styles.groupHeader}
-          onPress={() => toggleGroup(group.id)}
-        >
-          <View style={styles.groupInfo}>
-            <Text style={styles.groupTitle}>
-              {group.duplicates.length + 1} Similar Photos
-            </Text>
-            <Text style={styles.groupSubtitle}>
-              Original: {group.original?.filename || 'Unknown'}
-            </Text>
-          </View>
-          <Ionicons
-            name={isExpanded ? 'chevron-up' : 'chevron-down'}
-            size={24}
-            color="#666"
-          />
-        </TouchableOpacity>
-        {isExpanded && (
-          <View style={styles.groupContent}>
-            <FlatList
-              data={group.duplicates}
-              renderItem={renderPhotoItem}
-              keyExtractor={(item) => item.uri}
-              scrollEnabled={false}
-            />
-          </View>
-        )}
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2196F3" />
+        <Text style={styles.loadingText}>
+          Analyzing photos... {Math.round(progress * 100)}%
+        </Text>
       </View>
     );
-  };
+  }
 
-  if (!photos || photos.length === 0) {
+  if (similarGroups.length === 0) {
     return (
       <View style={styles.emptyContainer}>
         <Text style={styles.emptyText}>No similar photos found</Text>
@@ -98,90 +157,122 @@ export default function SimilarPhotosList({ photos = [], selectedPhotos = [], on
   }
 
   return (
-    <FlatList
-      data={photos}
-      renderItem={renderGroup}
-      keyExtractor={(item) => item.id}
-      contentContainerStyle={styles.container}
-    />
+    <ScrollView style={styles.container}>
+      {similarGroups.map((group, groupIndex) => {
+        const recommended = getRecommendedPhoto(group);
+        return (
+          <View key={groupIndex} style={styles.groupContainer}>
+            <Text style={styles.groupTitle}>
+              Similar Group {groupIndex + 1} ({group.length} photos)
+            </Text>
+            <View style={styles.photoGrid}>
+              {group.map((photo) => (
+                <TouchableOpacity
+                  key={photo.id}
+                  style={[
+                    styles.photoContainer,
+                    selectedPhotos.has(photo.id) && styles.selectedPhoto,
+                    photo.id === recommended.id && styles.recommendedPhoto,
+                  ]}
+                  onPress={() => onPhotoSelect(photo.id)}
+                >
+                  <Image
+                    source={{ uri: photo.uri }}
+                    style={styles.photo}
+                    resizeMode="cover"
+                  />
+                  {photo.id === recommended.id && (
+                    <View style={styles.recommendedBadge}>
+                      <Text style={styles.recommendedText}>Best</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        );
+      })}
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    padding: 16,
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#666',
   },
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
   },
   emptyText: {
     fontSize: 16,
     color: '#666',
-    textAlign: 'center',
   },
   groupContainer: {
+    margin: 10,
     backgroundColor: '#fff',
     borderRadius: 8,
-    marginBottom: 16,
-    overflow: 'hidden',
+    padding: 10,
     elevation: 2,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  groupHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    backgroundColor: '#f8f8f8',
-  },
-  groupInfo: {
-    flex: 1,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.5,
   },
   groupTitle: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: 'bold',
+    marginBottom: 10,
     color: '#333',
   },
-  groupSubtitle: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 2,
-  },
-  groupContent: {
-    padding: 8,
-  },
-  photoItem: {
+  photoGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    padding: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
   },
-  photoImage: {
-    width: 60,
-    height: 60,
+  photoContainer: {
+    width: '48%',
+    aspectRatio: 1,
+    marginBottom: 10,
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  selectedPhoto: {
+    borderColor: '#2196F3',
+  },
+  recommendedPhoto: {
+    borderColor: '#4CAF50',
+  },
+  photo: {
+    width: '100%',
+    height: '100%',
+  },
+  recommendedBadge: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    backgroundColor: '#4CAF50',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 4,
   },
-  photoInfo: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  photoName: {
-    fontSize: 14,
-    color: '#333',
-  },
-  similarityText: {
+  recommendedText: {
+    color: '#fff',
     fontSize: 12,
-    color: '#666',
-    marginTop: 2,
-  },
-  checkbox: {
-    marginLeft: 12,
+    fontWeight: 'bold',
   },
 }); 

@@ -25,11 +25,9 @@ export default function ScanScreen() {
         timestamp,
         totalScanned: results.totalScanned,
         lowQualityCount: results.lowQualityPhotos.length,
-        duplicateCount: results.duplicatePhotos.length,
-        similarCount: results.similarPhotos.length,
         lowQualityPhotos: results.lowQualityPhotos,
+        duplicateCount: results.duplicatePhotos.length,
         duplicatePhotos: results.duplicatePhotos,
-        similarPhotos: results.similarPhotos,
       };
 
       // Get existing scans
@@ -66,10 +64,7 @@ export default function ScanScreen() {
       let processedPhotos = 0;
       const lowQualityPhotos = [];
       const duplicatePhotos = [];
-      const similarPhotos = [];
-
-      // Create a map to track photos by size and creation time
-      const photoMap = new Map();
+      const photoMap = new Map(); // Map to track potential duplicates
 
       // Process each photo
       for (const photo of assets) {
@@ -81,91 +76,71 @@ export default function ScanScreen() {
         const photoInfo = await MediaLibrary.getAssetInfoAsync(photo);
         const fileInfo = await FileSystem.getInfoAsync(photoInfo.localUri);
         
-        // Check for low quality
-        if (fileInfo.size < 100000) { // Less than 100KB
+        // Check for low quality photos (less than 100KB)
+        if (fileInfo.size < 100000) {
           lowQualityPhotos.push({
             id: photo.id,
             filename: photo.filename,
             uri: photoInfo.localUri,
             size: fileInfo.size,
             creationTime: photo.creationTime,
+            type: 'lowQuality',
           });
         }
-
-        // Check for duplicates and similar photos
-        const key = `${fileInfo.size}_${photo.creationTime}`;
+        
+        // Check for duplicates based on file size and creation time
+        const key = `${fileInfo.size}-${photo.creationTime}`;
         if (photoMap.has(key)) {
-          // Exact duplicate found
+          // This is a duplicate
+          const originalPhoto = photoMap.get(key);
+          
+          // Add the original photo to duplicates if not already added
+          if (!duplicatePhotos.some(p => p.id === originalPhoto.id)) {
+            duplicatePhotos.push({
+              ...originalPhoto,
+              type: 'duplicate',
+              isOriginal: true,
+            });
+          }
+          
+          // Add the duplicate photo
           duplicatePhotos.push({
             id: photo.id,
             filename: photo.filename,
             uri: photoInfo.localUri,
             size: fileInfo.size,
             creationTime: photo.creationTime,
-            originalPhoto: photoMap.get(key)
+            type: 'duplicate',
+            isOriginal: false,
+            originalId: originalPhoto.id,
           });
         } else {
-          // Check for similar photos (within 5% size difference)
-          const similarKey = Array.from(photoMap.keys()).find(existingKey => {
-            const [existingSize] = existingKey.split('_');
-            const sizeDiff = Math.abs(fileInfo.size - parseInt(existingSize)) / fileInfo.size;
-            return sizeDiff <= 0.05; // 5% threshold
+          // Store this photo as a potential original
+          photoMap.set(key, {
+            id: photo.id,
+            filename: photo.filename,
+            uri: photoInfo.localUri,
+            size: fileInfo.size,
+            creationTime: photo.creationTime,
           });
-
-          if (similarKey) {
-            similarPhotos.push({
-              id: photo.id,
-              filename: photo.filename,
-              uri: photoInfo.localUri,
-              size: fileInfo.size,
-              creationTime: photo.creationTime,
-              originalPhoto: photoMap.get(similarKey),
-              similarity: 1 - Math.abs(fileInfo.size - parseInt(similarKey.split('_')[0])) / fileInfo.size
-            });
-          } else {
-            // Store this photo as a potential original
-            photoMap.set(key, {
-              id: photo.id,
-              filename: photo.filename,
-              uri: photoInfo.localUri,
-              size: fileInfo.size,
-              creationTime: photo.creationTime
-            });
-          }
         }
       }
-
-      // Group similar photos
-      const similarGroups = [];
-      const processedIds = new Set();
-
-      similarPhotos.forEach(photo => {
-        if (!processedIds.has(photo.id)) {
-          const group = {
-            id: photo.id,
-            original: photo.originalPhoto,
-            duplicates: similarPhotos.filter(p => 
-              p.originalPhoto.id === photo.originalPhoto.id && p.id !== photo.id
-            )
-          };
-          similarGroups.push(group);
-          processedIds.add(photo.id);
-          group.duplicates.forEach(p => processedIds.add(p.id));
-        }
-      });
 
       const results = {
         lowQualityPhotos,
         duplicatePhotos,
-        similarPhotos: similarGroups,
         totalScanned: totalPhotos,
       };
 
       // Save scan results
       await saveScanResults(results);
 
-      // Navigate to results screen
-      navigation.navigate('Results', { results });
+      // Navigate to results screen with the photos
+      navigation.navigate('Results', {
+        lowQualityPhotos: lowQualityPhotos || [],
+        duplicatePhotos: duplicatePhotos || [],
+        totalScanned: totalPhotos || 0
+      });
 
     } catch (error) {
       console.error('Error scanning photos:', error);
@@ -188,7 +163,7 @@ export default function ScanScreen() {
       <View style={styles.content}>
         <Text style={styles.title}>PhotoSweeper</Text>
         <Text style={styles.description}>
-          Scan your photos to find low quality, duplicate, and similar images
+          Scan your photos to find and remove low quality and duplicate images
         </Text>
         
         <TouchableOpacity

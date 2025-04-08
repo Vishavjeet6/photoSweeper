@@ -25,7 +25,11 @@ export default function ScanScreen() {
         timestamp,
         totalScanned: results.totalScanned,
         lowQualityCount: results.lowQualityPhotos.length,
+        duplicateCount: results.duplicatePhotos.length,
+        similarCount: results.similarPhotos.length,
         lowQualityPhotos: results.lowQualityPhotos,
+        duplicatePhotos: results.duplicatePhotos,
+        similarPhotos: results.similarPhotos,
       };
 
       // Get existing scans
@@ -61,6 +65,11 @@ export default function ScanScreen() {
       const totalPhotos = assets.length;
       let processedPhotos = 0;
       const lowQualityPhotos = [];
+      const duplicatePhotos = [];
+      const similarPhotos = [];
+
+      // Create a map to track photos by size and creation time
+      const photoMap = new Map();
 
       // Process each photo
       for (const photo of assets) {
@@ -70,13 +79,10 @@ export default function ScanScreen() {
 
         // Get the photo file
         const photoInfo = await MediaLibrary.getAssetInfoAsync(photo);
-        
-        // TODO: Implement photo quality assessment
-        // For now, we'll just check file size as a basic metric
         const fileInfo = await FileSystem.getInfoAsync(photoInfo.localUri);
         
+        // Check for low quality
         if (fileInfo.size < 100000) { // Less than 100KB
-          // Add to low quality photos list
           lowQualityPhotos.push({
             id: photo.id,
             filename: photo.filename,
@@ -85,18 +91,81 @@ export default function ScanScreen() {
             creationTime: photo.creationTime,
           });
         }
+
+        // Check for duplicates and similar photos
+        const key = `${fileInfo.size}_${photo.creationTime}`;
+        if (photoMap.has(key)) {
+          // Exact duplicate found
+          duplicatePhotos.push({
+            id: photo.id,
+            filename: photo.filename,
+            uri: photoInfo.localUri,
+            size: fileInfo.size,
+            creationTime: photo.creationTime,
+            originalPhoto: photoMap.get(key)
+          });
+        } else {
+          // Check for similar photos (within 5% size difference)
+          const similarKey = Array.from(photoMap.keys()).find(existingKey => {
+            const [existingSize] = existingKey.split('_');
+            const sizeDiff = Math.abs(fileInfo.size - parseInt(existingSize)) / fileInfo.size;
+            return sizeDiff <= 0.05; // 5% threshold
+          });
+
+          if (similarKey) {
+            similarPhotos.push({
+              id: photo.id,
+              filename: photo.filename,
+              uri: photoInfo.localUri,
+              size: fileInfo.size,
+              creationTime: photo.creationTime,
+              originalPhoto: photoMap.get(similarKey),
+              similarity: 1 - Math.abs(fileInfo.size - parseInt(similarKey.split('_')[0])) / fileInfo.size
+            });
+          } else {
+            // Store this photo as a potential original
+            photoMap.set(key, {
+              id: photo.id,
+              filename: photo.filename,
+              uri: photoInfo.localUri,
+              size: fileInfo.size,
+              creationTime: photo.creationTime
+            });
+          }
+        }
       }
+
+      // Group similar photos
+      const similarGroups = [];
+      const processedIds = new Set();
+
+      similarPhotos.forEach(photo => {
+        if (!processedIds.has(photo.id)) {
+          const group = {
+            id: photo.id,
+            original: photo.originalPhoto,
+            duplicates: similarPhotos.filter(p => 
+              p.originalPhoto.id === photo.originalPhoto.id && p.id !== photo.id
+            )
+          };
+          similarGroups.push(group);
+          processedIds.add(photo.id);
+          group.duplicates.forEach(p => processedIds.add(p.id));
+        }
+      });
 
       const results = {
         lowQualityPhotos,
+        duplicatePhotos,
+        similarPhotos: similarGroups,
         totalScanned: totalPhotos,
       };
 
       // Save scan results
       await saveScanResults(results);
 
-      // Navigate to results screen with the low quality photos
-      navigation.navigate('Results', results);
+      // Navigate to results screen
+      navigation.navigate('Results', { results });
 
     } catch (error) {
       console.error('Error scanning photos:', error);
@@ -119,7 +188,7 @@ export default function ScanScreen() {
       <View style={styles.content}>
         <Text style={styles.title}>PhotoSweeper</Text>
         <Text style={styles.description}>
-          Scan your photos to find and remove low quality images
+          Scan your photos to find low quality, duplicate, and similar images
         </Text>
         
         <TouchableOpacity

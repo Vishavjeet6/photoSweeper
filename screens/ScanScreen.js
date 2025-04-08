@@ -20,25 +20,26 @@ export default function ScanScreen() {
 
   const saveScanResults = async (results) => {
     try {
-      const timestamp = new Date().toISOString();
       const scanData = {
-        timestamp,
+        timestamp: new Date().toISOString(),
         totalScanned: results.totalScanned,
         lowQualityCount: results.lowQualityPhotos.length,
         lowQualityPhotos: results.lowQualityPhotos,
         duplicateCount: results.duplicatePhotos.length,
         duplicatePhotos: results.duplicatePhotos,
+        similarCount: results.similarPhotos.length,
+        similarPhotos: results.similarPhotos,
       };
 
-      // Get existing scans
-      const existingScansJson = await AsyncStorage.getItem('scanHistory');
-      const existingScans = existingScansJson ? JSON.parse(existingScansJson) : [];
+      // Get existing scan history
+      const existingHistoryJson = await AsyncStorage.getItem('scanHistory');
+      const existingHistory = existingHistoryJson ? JSON.parse(existingHistoryJson) : [];
 
-      // Add new scan to history
-      const updatedScans = [scanData, ...existingScans];
+      // Add new scan to the beginning of the history
+      const updatedHistory = [scanData, ...existingHistory];
 
       // Save updated history
-      await AsyncStorage.setItem('scanHistory', JSON.stringify(updatedScans));
+      await AsyncStorage.setItem('scanHistory', JSON.stringify(updatedHistory));
     } catch (error) {
       console.error('Error saving scan results:', error);
     }
@@ -64,7 +65,9 @@ export default function ScanScreen() {
       let processedPhotos = 0;
       const lowQualityPhotos = [];
       const duplicatePhotos = [];
+      const similarPhotos = [];
       const photoMap = new Map(); // Map to track potential duplicates
+      const similarPhotoMap = new Map(); // Map to track potential similar photos
 
       // Process each photo
       for (const photo of assets) {
@@ -83,16 +86,18 @@ export default function ScanScreen() {
             filename: photo.filename,
             uri: photoInfo.localUri,
             size: fileInfo.size,
+            width: photo.width,
+            height: photo.height,
             creationTime: photo.creationTime,
             type: 'lowQuality',
           });
         }
         
-        // Check for duplicates based on file size and creation time
-        const key = `${fileInfo.size}-${photo.creationTime}`;
-        if (photoMap.has(key)) {
-          // This is a duplicate
-          const originalPhoto = photoMap.get(key);
+        // Check for exact duplicates based on file size and creation time
+        const duplicateKey = `${fileInfo.size}-${photo.creationTime}`;
+        if (photoMap.has(duplicateKey)) {
+          // This is an exact duplicate
+          const originalPhoto = photoMap.get(duplicateKey);
           
           // Add the original photo to duplicates if not already added
           if (!duplicatePhotos.some(p => p.id === originalPhoto.id)) {
@@ -109,18 +114,72 @@ export default function ScanScreen() {
             filename: photo.filename,
             uri: photoInfo.localUri,
             size: fileInfo.size,
+            width: photo.width,
+            height: photo.height,
             creationTime: photo.creationTime,
             type: 'duplicate',
             isOriginal: false,
             originalId: originalPhoto.id,
           });
         } else {
-          // Store this photo as a potential original
-          photoMap.set(key, {
+          // Store this photo as a potential original for duplicates
+          photoMap.set(duplicateKey, {
             id: photo.id,
             filename: photo.filename,
             uri: photoInfo.localUri,
             size: fileInfo.size,
+            width: photo.width,
+            height: photo.height,
+            creationTime: photo.creationTime,
+          });
+        }
+        
+        // Check for similar photos based on file size, dimensions, and creation time
+        const similarKey = `${Math.floor(fileInfo.size / 10000)}-${Math.floor(photo.width / 100)}-${Math.floor(photo.height / 100)}-${Math.floor(photo.creationTime / 60000)}`; // Group by ranges
+        if (similarPhotoMap.has(similarKey)) {
+          // This is a potential similar photo
+          const originalPhoto = similarPhotoMap.get(similarKey);
+          
+          // Calculate similarity score
+          const timeDiff = Math.abs(photo.creationTime - originalPhoto.creationTime);
+          const sizeSimilarity = Math.min(fileInfo.size, originalPhoto.size) / Math.max(fileInfo.size, originalPhoto.size);
+          const dimensionSimilarity = Math.min(photo.width * photo.height, originalPhoto.width * originalPhoto.height) /
+                                    Math.max(photo.width * photo.height, originalPhoto.width * originalPhoto.height);
+          
+          // If photos are very similar (taken within 1 minute and similar size/dimensions)
+          if (timeDiff <= 60000 && sizeSimilarity > 0.7 && dimensionSimilarity > 0.7) {
+            // Add the original photo to similar photos if not already added
+            if (!similarPhotos.some(p => p.id === originalPhoto.id)) {
+              similarPhotos.push({
+                ...originalPhoto,
+                type: 'similar',
+                isOriginal: true,
+              });
+            }
+            
+            // Add the similar photo
+            similarPhotos.push({
+              id: photo.id,
+              filename: photo.filename,
+              uri: photoInfo.localUri,
+              size: fileInfo.size,
+              width: photo.width,
+              height: photo.height,
+              creationTime: photo.creationTime,
+              type: 'similar',
+              isOriginal: false,
+              originalId: originalPhoto.id,
+            });
+          }
+        } else {
+          // Store this photo as a potential original for similar photos
+          similarPhotoMap.set(similarKey, {
+            id: photo.id,
+            filename: photo.filename,
+            uri: photoInfo.localUri,
+            size: fileInfo.size,
+            width: photo.width,
+            height: photo.height,
             creationTime: photo.creationTime,
           });
         }
@@ -129,6 +188,7 @@ export default function ScanScreen() {
       const results = {
         lowQualityPhotos,
         duplicatePhotos,
+        similarPhotos,
         totalScanned: totalPhotos,
       };
 
@@ -139,6 +199,7 @@ export default function ScanScreen() {
       navigation.navigate('Results', {
         lowQualityPhotos: lowQualityPhotos || [],
         duplicatePhotos: duplicatePhotos || [],
+        similarPhotos: similarPhotos || [],
         totalScanned: totalPhotos || 0
       });
 

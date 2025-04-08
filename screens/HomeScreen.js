@@ -7,16 +7,19 @@ import {
   FlatList,
   Alert,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function HomeScreen() {
   const [scanHistory, setScanHistory] = useState([]);
   const navigation = useNavigation();
 
-  useEffect(() => {
-    loadScanHistory();
-  }, []);
+  // Load scan history when the screen is focused
+  useFocusEffect(
+    React.useCallback(() => {
+      loadScanHistory();
+    }, [])
+  );
 
   const loadScanHistory = async () => {
     try {
@@ -42,6 +45,7 @@ export default function HomeScreen() {
         navigation.navigate('Results', {
           lowQualityPhotos: item.lowQualityPhotos || [],
           duplicatePhotos: item.duplicatePhotos || [],
+          similarPhotos: item.similarPhotos || [],
           totalScanned: item.totalScanned || 0
         });
       }}
@@ -53,6 +57,9 @@ export default function HomeScreen() {
         </Text>
         <Text style={styles.scanStat}>
           Low Quality: {item.lowQualityCount}
+        </Text>
+        <Text style={styles.scanStat}>
+          Similar: {item.similarCount || 0}
         </Text>
         <Text style={styles.scanStat}>
           Duplicates: {item.duplicateCount}

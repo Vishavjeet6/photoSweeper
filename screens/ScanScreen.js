@@ -4,11 +4,13 @@ import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { BATCH_SIZE } from '../constants';
 
 export default function ScanScreen() {
   const [hasPermission, setHasPermission] = useState(null);
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
+  const [statusText, setStatusText] = useState('');
   const navigation = useNavigation();
 
   useEffect(() => {
@@ -20,26 +22,27 @@ export default function ScanScreen() {
 
   const saveScanResults = async (results) => {
     try {
+      // Ensure all arrays exist before accessing their length
+      const lowQualityPhotos = results.lowQualityPhotos || [];
+      const duplicatePhotos = results.duplicatePhotos || [];
+      const similarPhotos = results.similarPhotos || [];
+      const cnnPhotos = results.cnnPhotos || [];
+      
       const scanData = {
-        timestamp: new Date().toISOString(),
-        totalScanned: results.totalScanned,
-        lowQualityCount: results.lowQualityPhotos.length,
-        lowQualityPhotos: results.lowQualityPhotos,
-        duplicateCount: results.duplicatePhotos.length,
-        duplicatePhotos: results.duplicatePhotos,
-        similarCount: results.similarPhotos.length,
-        similarPhotos: results.similarPhotos,
+        date: new Date().toISOString(),
+        lowQualityCount: lowQualityPhotos.length,
+        duplicateCount: duplicatePhotos.length,
+        similarCount: similarPhotos.length,
+        cnnCount: cnnPhotos.length,
+        totalScanned: results.totalScanned || 0,
+        lowQualityPhotos: lowQualityPhotos,
+        duplicatePhotos: duplicatePhotos,
+        similarPhotos: similarPhotos,
+        cnnPhotos: cnnPhotos
       };
 
-      // Get existing scan history
-      const existingHistoryJson = await AsyncStorage.getItem('scanHistory');
-      const existingHistory = existingHistoryJson ? JSON.parse(existingHistoryJson) : [];
-
-      // Add new scan to the beginning of the history
-      const updatedHistory = [scanData, ...existingHistory];
-
-      // Save updated history
-      await AsyncStorage.setItem('scanHistory', JSON.stringify(updatedHistory));
+      // Save only the most recent scan
+      await AsyncStorage.setItem('scanHistory', JSON.stringify([scanData]));
     } catch (error) {
       console.error('Error saving scan results:', error);
     }
@@ -53,14 +56,23 @@ export default function ScanScreen() {
 
     setIsScanning(true);
     setScanProgress(0);
+    setStatusText('Starting scan...');
 
     try {
       // Get all photos from the media library
+      setStatusText('Loading photos...');
       const { assets } = await MediaLibrary.getAssetsAsync({
         mediaType: 'photo',
-        first: 1000, // Limit to first 1000 photos for testing
+        first: BATCH_SIZE, // Using the constant for batch size
       });
 
+      if (assets.length === 0) {
+        Alert.alert('No Photos', 'No photos found in your library.');
+        setIsScanning(false);
+        return;
+      }
+
+      setStatusText('Analyzing photos...');
       const totalPhotos = assets.length;
       let processedPhotos = 0;
       const lowQualityPhotos = [];
@@ -74,6 +86,7 @@ export default function ScanScreen() {
         // Update progress
         processedPhotos++;
         setScanProgress((processedPhotos / totalPhotos) * 100);
+        setStatusText(`Analyzing photo ${processedPhotos} of ${totalPhotos}...`);
 
         // Get the photo file
         const photoInfo = await MediaLibrary.getAssetInfoAsync(photo);
@@ -185,6 +198,7 @@ export default function ScanScreen() {
         }
       }
 
+      setStatusText('Saving results...');
       const results = {
         lowQualityPhotos,
         duplicatePhotos,
@@ -209,6 +223,7 @@ export default function ScanScreen() {
     } finally {
       setIsScanning(false);
       setScanProgress(0);
+      setStatusText('');
     }
   };
 
@@ -239,9 +254,9 @@ export default function ScanScreen() {
         
         {isScanning && (
           <View style={styles.progressContainer}>
-            <ActivityIndicator size={48} color="#2196F3" />
+            <ActivityIndicator size="large" color="#2196F3" />
             <Text style={styles.progressText}>
-              Scanning photos... {Math.round(scanProgress)}%
+              {statusText} {Math.round(scanProgress)}%
             </Text>
           </View>
         )}

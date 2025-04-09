@@ -26,47 +26,52 @@ export default function HomeScreen() {
       const historyJson = await AsyncStorage.getItem('scanHistory');
       if (historyJson) {
         const history = JSON.parse(historyJson);
-        setScanHistory(history);
+        // Only take the most recent scan
+        setScanHistory(history.slice(0, 1));
       }
     } catch (error) {
       console.error('Error loading scan history:', error);
     }
   };
 
-  const formatDate = (timestamp) => {
-    const date = new Date(timestamp);
-    return date.toLocaleString();
-  };
+  const renderScanItem = ({ item }) => {
+    let formattedDate = 'Invalid Date';
+    try {
+      if (item && item.date) {
+        const date = new Date(item.date);
+        if (!isNaN(date.getTime())) {
+          formattedDate = new Intl.DateTimeFormat('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          }).format(date);
+        }
+      }
+    } catch (error) {
+      console.error('Error formatting date:', error);
+    }
 
-  const renderScanItem = ({ item }) => (
-    <TouchableOpacity
-      style={styles.scanItem}
-      onPress={() => {
-        navigation.navigate('Results', {
+    return (
+      <TouchableOpacity
+        style={styles.scanItem}
+        onPress={() => navigation.navigate('Results', {
           lowQualityPhotos: item.lowQualityPhotos || [],
           duplicatePhotos: item.duplicatePhotos || [],
           similarPhotos: item.similarPhotos || [],
-          totalScanned: item.totalScanned || 0
-        });
-      }}
-    >
-      <Text style={styles.scanDate}>{formatDate(item.timestamp)}</Text>
-      <View style={styles.scanStats}>
-        <Text style={styles.scanStat}>
-          Total Scanned: {item.totalScanned}
+          cnnPhotos: item.cnnPhotos || [],
+          totalScanned: item.totalScanned || 0,
+        })}
+      >
+        <Text style={styles.scanDate}>{formattedDate}</Text>
+        <Text style={styles.scanStats}>
+          Found {item.lowQualityCount || 0} low quality, {item.similarCount || 0} similar, {item.duplicateCount || 0} duplicate, and {item.cnnCount || 0} CNN-analyzed photos out of {item.totalScanned || 0} total
         </Text>
-        <Text style={styles.scanStat}>
-          Low Quality: {item.lowQualityCount}
-        </Text>
-        <Text style={styles.scanStat}>
-          Similar: {item.similarCount || 0}
-        </Text>
-        <Text style={styles.scanStat}>
-          Duplicates: {item.duplicateCount}
-        </Text>
-      </View>
-    </TouchableOpacity>
-  );
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -82,12 +87,12 @@ export default function HomeScreen() {
         <Text style={styles.scanButtonText}>Start New Scan</Text>
       </TouchableOpacity>
 
-      <Text style={styles.historyTitle}>Previous Scans</Text>
+      <Text style={styles.historyTitle}>Last Scan</Text>
       {scanHistory.length > 0 ? (
         <FlatList
           data={scanHistory}
           renderItem={renderScanItem}
-          keyExtractor={(item) => item.timestamp}
+          keyExtractor={(item) => item.date || `scan-${Math.random()}`}
           style={styles.historyList}
         />
       ) : (
@@ -159,10 +164,6 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   scanStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  scanStat: {
     fontSize: 14,
     color: '#666',
   },
